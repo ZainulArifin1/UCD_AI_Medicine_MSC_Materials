@@ -1,0 +1,13 @@
+sample_name,patient_id,sample_type,sample_site,label_short
+SOL1303,P1,Tumor,omentum,P1_T_Om
+SOL1304,P1,Normal,omentum,P1_N_Om
+SOL1305,P1,Normal,peritoneum,P1_N_Per
+SOL1306,P1,Tumor,peritoneum,P1_T_Per
+SOL1307,P1,Tumor,ovary,P1_T_Ov
+SOL003,P2,Tumor,peritoneum,P2_T_Per
+SOL004,P3,Tumor,peritoneum,P3_T_Per
+SOL006,P4,Tumor,ovary,P4_T_Ov
+SOL007,P4,Normal,ovary,P4_N_Ov
+SOL008,P5,Tumor,peritoneum,P5_T_Per
+SOL012,P6,Tumor,peritoneum,P6_T_Per
+SOL016,P7,Tumor,peritoneum,P7_T_Per

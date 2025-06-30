@@ -44,8 +44,8 @@ library(clusterProfiler) # BiocManager::install("clusterProfiler")
 library(org.Hs.eg.db) # BiocManager::install("org.Hs.eg.db")
 library(ggrepel) # install.packages("ggrepel")
 library(patchwork) # devtools::install_github("thomasp85/patchwork")
-library(scPOP)
-library(SingleCellExperiment)
+library(scPOP) # devtools::install_github('vinay-swamy/scPOP')
+library(SingleCellExperiment) # BiocManager::install("SingleCellExperiment")
 ```
 
 ```{r, read_data, cache=TRUE}

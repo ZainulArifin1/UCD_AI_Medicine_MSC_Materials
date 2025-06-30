@@ -1,0 +1,144 @@
+---
+title: "Single-cell RNA-seq analysis tutorial - Olbrech et.al. Dataset"
+author: "Zain Arifin and Sodiq Hameed"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    highlight: zenburn
+    theme: simplex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{css, echo=FALSE}
+.list-group-item.active, .list-group-item.active:hover, .list-group-item.active:focus {
+    color: #ffffff;
+    background-color: #333333;
+}
+p {
+  color: #333333;
+}
+```
+
+## Introduction 
+
+This tutorial will cover the basic steps in analysing scRNA-seq data as well as downstream analyses. We will analyze high-grade serous tubo-ovarian cancer from Olbrecht et.al. For more information about the data please have a look here: https://lambrechtslab.sites.vib.be/en/high-grade-serous-tubo-ovarian-cancer-refined-single-cell-rna-sequencing-specific-cell-subtypes
+
+## Load data and packages
+
+```{r, load_libraries, message=FALSE, warning=FALSE}
+options(future.globals.maxSize = 10 * 1024^3) 
+
+# load libraries
+library(devtools)
+library(tidyverse) # install.packages("tidyverse")
+library(Seurat) # install.packages('Seurat')
+library(clusterProfiler) # BiocManager::install("clusterProfiler")
+library(org.Hs.eg.db) # BiocManager::install("org.Hs.eg.db")
+library(ggrepel) # install.packages("ggrepel")
+library(SingleCellExperiment) # BiocManager::install("SingleCellExperiment")
+library(harmony)
+library(HGNChelper)
+```
+
+```{r, read_data, cache=TRUE}
+# read in data
+dat <- readRDS('2095-Olbrecht_counts_matrix.rds')
+metadata <- read.csv("2093-Olbrecht_metadata_file.csv")
+
+cell_id <- data.frame("cellid" = colnames(dat))
+cell_id <- cell_id %>%
+  separate(cellid, into = c("barcode", "sample_name"), sep = "_", remove = FALSE)
+metadata <- left_join(cell_id, metadata, by = "sample_name")
+rownames(metadata) <- metadata$cellid
+```
+
+## Data input and QC
+
+```{r, input_and_cleaning, cache=TRUE}
+dat_seurat <- CreateSeuratObject(dat, project = "Olbrecht", assay = "RNA",
+                                 min.cells = 10, min.features = 100, names.field = 1,
+                                 meta.data = metadata)
+dat_seurat$percent_mt <- PercentageFeatureSet(dat_seurat, pattern="^MT.")
+
+dat_seurat <- subset(dat_seurat, subset = percent_mt < 20 & sample_type == "Tumor")
+VlnPlot(dat_seurat, features = c("nCount_RNA", "nFeature_RNA", "percent_mt")) 
+```
+
+## Standard data pre-processing
+
+```{r, preprocessing, cache=TRUE}
+dat_seurat <- dat_seurat %>%
+    Seurat::NormalizeData(verbose = FALSE) %>%
+    FindVariableFeatures(selection.method = "vst", nfeatures = 2000) %>% 
+    ScaleData(verbose = FALSE) %>% 
+    RunPCA(pc.genes = pbmc@var.genes, npcs = 20, verbose = FALSE)
+```
+
+## Batch correction with Harmony
+
+```{r integration}
+dat_seurat <- dat_seurat %>% 
+    RunHarmony("sample_name", plot_convergence = TRUE)
+
+dat_seurat <- dat_seurat %>% 
+    RunUMAP(reduction = "harmony", dims = 1:20) %>% 
+    FindNeighbors(reduction = "harmony", dims = 1:20) %>% 
+    FindClusters(resolution = 0.7) %>% 
+    identity()
+
+DimPlot(dat_seurat, group.by = c("sample_name", "sample_type", "sample_site") )
+```
+
+## cell type annotation
+
+```{r annotation}
+library(SingleR)
+library(celldex)
+hpca.se <- HumanPrimaryCellAtlasData()
+
+pred_celltype <- SingleR(test = dat_seurat@assays$RNA$counts, 
+                         ref = hpca.se, assay.type.test=1,
+                         labels = hpca.se$label.main)
+pred_celltype_df <- data.frame("cellid" = pred_celltype@rownames, 
+                               "cell_type" = pred_celltype$labels)
+
+## cell type annotation step can take some time, if you want to skip it. Please load the file in the following chunk
+
+meta_combined <- left_join(dat_seurat@meta.data, pred_celltype_df, by = "cellid")
+rownames(meta_combined) <- meta_combined$cellid
+dat_seurat@meta.data <- meta_combined
+
+
+cell_type_agg <- as.data.frame(table(dat_seurat$seurat_clusters, dat_seurat$cell_type)) %>%
+  group_by(Var1) %>%
+  slice_max(Freq) %>%
+  dplyr::select(seurat_clusters = Var1, celltype_cluster = Var2)
+
+dat_seurat@meta.data <- left_join(dat_seurat@meta.data, cell_type_agg)
+rownames(dat_seurat@meta.data) <- dat_seurat@meta.data$cellid
+dat_seurat$celltype_cluster <- as.character(dat_seurat$celltype_cluster)
+
+DimPlot(dat_seurat, group.by = "celltype_cluster", label = T)
+
+# Manual correction
+dat_seurat@meta.data$celltype_cluster <- ifelse(dat_seurat$celltype_cluster %in% 
+                                                  c("Neurons", "Epithelial_cells"),
+                                                "Epithelial/Cancer", dat_seurat$celltype_cluster)
+dat_seurat@meta.data$celltype_cluster <- ifelse(dat_seurat$celltype_cluster %in% 
+                                                  c("Smooth_muscle_cells", "Fibroblasts",
+                                                    "Chondrocytes","Astrocyte"),
+                                                "Fibroblasts/Stromal", dat_seurat$celltype_cluster)
+DimPlot(dat_seurat, group.by = "celltype_cluster", label = T)
+# saveRDS(dat_seurat, "2095-Olbrecht_Seurat_Celltype.rds")
+```
+
+
+```{r load_annotated_file}
+dat_seurat <- readRDS("2095-Olbrecht_Seurat_Celltype.rds")
+```
