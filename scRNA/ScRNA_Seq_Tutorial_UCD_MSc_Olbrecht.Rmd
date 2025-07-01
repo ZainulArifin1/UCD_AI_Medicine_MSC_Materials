@@ -46,7 +46,7 @@ library(harmony)
 library(HGNChelper)
 ```
 
-```{r, read_data, cache=TRUE}
+```{r, read_data, cache=F}
 # read in data
 dat <- readRDS('2095-Olbrecht_counts_matrix.rds')
 metadata <- read.csv("2093-Olbrecht_metadata_file.csv")
@@ -60,7 +60,7 @@ rownames(metadata) <- metadata$cellid
 
 ## Data input and QC
 
-```{r, input_and_cleaning, cache=TRUE}
+```{r, input_and_cleaning, cache=F}
 dat_seurat <- CreateSeuratObject(dat, project = "Olbrecht", assay = "RNA",
                                  min.cells = 10, min.features = 100, names.field = 1,
                                  meta.data = metadata)
@@ -72,7 +72,7 @@ VlnPlot(dat_seurat, features = c("nCount_RNA", "nFeature_RNA", "percent_mt"))
 
 ## Standard data pre-processing
 
-```{r, preprocessing, cache=TRUE}
+```{r, preprocessing, cache=F}
 dat_seurat <- dat_seurat %>%
     Seurat::NormalizeData(verbose = FALSE) %>%
     FindVariableFeatures(selection.method = "vst", nfeatures = 2000) %>% 
