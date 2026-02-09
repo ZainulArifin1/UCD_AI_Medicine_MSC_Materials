@@ -63,7 +63,7 @@ library(harmony) # install.packages("harmony")
 
 ```{r, read_data, cache=TRUE}
 # read in processed data from tutorial 1
-dat.combined <- readRDS('breast_cancer_scRNA_processed.Rds')
+dat.combined <- readRDS('../../output/RNA/breast_cancer_scRNA_processed.Rds')
 DefaultAssay(dat.combined) <- "RNA"
 head(dat.combined@meta.data)
 ```
@@ -77,7 +77,8 @@ A straightforward way to gain a functional understanding of biological functions
 
 - GSEA: Wit this method, similar to ORA, we input the list of genes alongside its associated weights (LFC, t-score, p-value, etc). GSEA uses Kolmogorov-Smirnov-like statistic to test if small steps of changes of the gene list take together significantly differ from the background. Unlike, ORA analysis, GSEA allows us to infer directionality between groups of interest.
 
-```{r, ORA, warning=F}
+
+```{r, DE2, fig.height=7, fig.width=9}
 # DE analysis for ORA
 deg_df <- data.frame()
 for(i in unique(dat.combined$cell_type_major)){
@@ -92,7 +93,41 @@ for(i in unique(dat.combined$cell_type_major)){
 deg_df_signif <- deg_df %>% dplyr::filter(p_val_adj < 0.05 & abs(avg_log2FC) > log2(1.5))
 deg_df_signif_list <- split(deg_df_signif, deg_df_signif$cell)
 
+library(EnhancedVolcano)
+# Get unique cell types
+cell_types <- unique(deg_df$cell)
+volcano_list <- list()
 
+# Loop through each cell type and generate a volcano plot
+for (ct in cell_types) {
+  deg_df_ct <- deg_df %>% filter(cell == ct)
+  
+  p <- EnhancedVolcano(deg_df_ct,
+                       lab = deg_df_ct$gene,
+                       x = "avg_log2FC",
+                       y = "p_val_adj",
+                       ylab = "-Log10 adjusted p-val",
+                       pCutoff = 0.05,
+                       FCcutoff = log2(1.5),
+                       col = c("black", "black", "black", "red3"),
+                       colAlpha = 1,
+                       subtitle = "",
+                       title = ct,
+                       legendPosition = 'right',
+                       legendLabSize = -1,
+                       legendIconSize = -1,
+                       titleLabSize = 15)
+  
+  volcano_list[[ct]] <- p
+}
+
+for(i in 1:length(volcano_list)){
+  print(volcano_list[i])
+}
+```
+
+
+```{r, ORA, warning=F}
 # Run ORA with gprofiler
 gene_list_to_test <- lapply(deg_df_signif_list, function(x) {
   return(as.character(x$gene)) # Replace 'gene' with your actual column name
@@ -199,9 +234,10 @@ ggplot(scpa_results_list_signif, aes(
 
 In RNA-seq experiment, an important analysis is to identify active transcription factors (TF). Typically, if we look at only the expression profile, we would not see large differences between groups. We will use, Decoupler linear method utilizing COllecTRI as the TF-targets database to model TF activities. This method works by evaluating expected TF-targets interaction and matching it to actual observation using linear estimation. There are two ways these analysis can be done, first by inputting statistical test score or the count matrix directly. In this tutorial, we will try to directly input the count matrix but we will down sample to reduce the time complexity.
 
-```{r}
+```{r, TF, warning=F}
 load("TFN.RData")
 # Downsample
+set.seed(1111)
 dat.combined$cell_tissue <- paste0(dat.combined$cell_type_major,"_",dat.combined$tissue)
 counts <- table(dat.combined$cell_tissue)
 keep_groups <- names(counts[counts >= 50])
@@ -217,6 +253,8 @@ sample_acts <- decoupleR::run_ulm(mat = dat.filtered@assays$RNA@counts,
                                   .target = 'target',
                                   .mor = 'mor', 
                                   minsize = 5)
+acts <- sample_acts
+
 meta_join <- dat.filtered@meta.data
 meta_join$condition <- rownames(meta_join)
 meta_join <- meta_join %>% dplyr::select(condition, cell_tissue)
@@ -259,6 +297,46 @@ pheatmap(
   angle_col = 45,
   cluster_rows = T
 )
+
+# Differential TFs
+dat.filtered[['tfsulm']] <- acts %>%
+                    tidyr::pivot_wider(id_cols = 'source', 
+                                       names_from = 'condition',
+                                       values_from = 'score') %>%
+                    tibble::column_to_rownames('source') %>%
+                    Seurat::CreateAssayObject(.)
+
+# Change assay
+DefaultAssay(object = dat.filtered) <- "tfsulm"
+dat.filtered <- Seurat::ScaleData(dat.filtered)
+dat.filtered@assays$tfsulm@data <- dat.filtered@assays$tfsulm@scale.data
+
+
+deg_TF <- data.frame()
+for(i in unique(dat.filtered$cell_type_major)){
+  sub <- dat.filtered[, dat.filtered$cell_type_major == i]
+  tryCatch({
+    degs <- FindMarkers(sub, assay = 'tfsulm', group.by = 'tissue', ident.1 = 'TUMOR', ident.2 = 'NORMAL')
+    degs <- degs %>% rownames_to_column(var = 'gene') %>% mutate(cell = i)
+    deg_TF <- rbind(deg_TF, degs)
+  }, error=function(e){cat("ERROR :",conditionMessage(e), "\n")})
+}
+
+deg_TF_signif <- deg_TF %>% dplyr::filter(p_val_adj < 0.05 & abs(avg_log2FC) > log2(1.5))
+deg_TF_signif_list <- split(deg_TF_signif, deg_TF_signif$cell)
+
+
+for(i in 1:length(deg_TF_signif_list)){
+  temp <- deg_TF_signif_list[[i]]
+  temp <- temp %>% dplyr::arrange(p_val_adj) %>% head(.,20)
+  
+  plot1 <- ggplot(data = temp, mapping = aes(x = reorder(gene, avg_log2FC), y = avg_log2FC, fill = -log10(p_val_adj)))+
+    geom_col()+
+    cowplot::theme_cowplot() +
+    labs(x = "", y = "log2FC average", title = names(deg_TF_signif_list[i])) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  print(plot1)
+}
 ```
 
 ## GRN Inference
@@ -276,9 +354,9 @@ Gene Regulatory Network (GRN) identify the directional and functional relationsh
 # write.table(temp, "Input_Scenic.tsv", sep = "\t")
 # rm(temp)
 
-Regulon_df <- read.csv("SCENIC_Output/MSC_regulon.csv")
-Regulon_mtx <- read.csv("SCENIC_Output/MSC_auc_mtx.csv")
-GRN <- read.csv("SCENIC_Output/MSC_adj.csv")
+Regulon_df <- read.csv("../../output/RNA/SCENIC_Output/MSC_regulon.csv")
+Regulon_mtx <- read.csv("../../output/RNA/SCENIC_Output/MSC_auc_mtx.csv")
+GRN <- read.csv("../../output/RNA/SCENIC_Output/MSC_adj.csv")
 
 rownames(Regulon_mtx) <- gsub("(+)", "", rownames(Regulon_mtx), fixed = TRUE)
 
