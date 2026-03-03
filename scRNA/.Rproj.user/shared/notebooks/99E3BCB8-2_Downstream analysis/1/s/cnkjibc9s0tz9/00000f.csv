@@ -1,0 +1,4 @@
+"0","# read in processed data from tutorial 1"
+"0","dat.combined <- readRDS('../../output/RNA/breast_cancer_scRNA_processed.Rds')"
+"0","DefaultAssay(dat.combined) <- ""RNA"""
+"0","head(dat.combined@meta.data)"
